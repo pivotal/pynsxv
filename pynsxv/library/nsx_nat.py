@@ -190,7 +190,7 @@ def contruct_parser(subparsers):
                         help="Translated IP Address")
     # PEZ Changes
     # New arguments
-        parser.add_argument("-op",
+    parser.add_argument("-op",
                         "--original_port",
                         help="Original port")
     parser.add_argument("-tp",
@@ -253,7 +253,7 @@ def _nat_main(args):
                                         description=args.description,
                                         rule_id=args.rule_id,
                                        )
-     except KeyError:
+    except KeyError:
         print('Unknown command')
 
 def main():

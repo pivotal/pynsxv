@@ -174,7 +174,7 @@ def add_app_rule(client_session, esg_name, rule_name, rule_script):
     rule_dict['applicationRule']['script'] = rule_script
 
     result = client_session.create('appRules', uri_parameters={'edgeId': esg_id}, request_body_dict=rule_dict)
-   if result['status'] != 201:
+    if result['status'] != 201:
         return None
     else:
         return result['objectId']
