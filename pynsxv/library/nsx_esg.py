@@ -33,6 +33,8 @@ from tabulate import tabulate
 from nsxramlclient.client import NsxClient
 from argparse import RawTextHelpFormatter
 from pkg_resources import resource_filename
+# PEZ Changes
+from libutils import nametovalue
 
 
 def esg_create(client_session, esg_name, esg_pwd, esg_size, datacentermoid, datastoremoid, resourcepoolid, default_pg,
@@ -115,11 +117,15 @@ def routing_ospf(client_session, esg_name, vnic_ip, area_id, auth_type, auth_val
     """
     routing_dict = client_session.extract_resource_body_example('routingConfig', 'update')
 
-    del routing_dict['routing']['ospf']['redistribution']['rules']
+    # PEZ Changes
+    # We want redistribution enabled
+    # del routing_dict['routing']['ospf']['redistribution']['rules']
     del routing_dict['routing']['bgp']
     del routing_dict['routing']['staticRouting']['staticRoutes']
     del routing_dict['routing']['routingGlobalConfig']['ipPrefixes']
-    routing_dict['routing']['ospf']['redistribution']['enabled'] = 'false'
+    # PEZ Changes
+    # We want redistribution enabled
+    # routing_dict['routing']['ospf']['redistribution']['enabled'] = 'false'
 
     routing_dict['routing']['staticRouting']['defaultRoute']['gatewayAddress'] = '10.193.252.1'
     routing_dict['routing']['staticRouting']['defaultRoute']['vnic'] = '0'
@@ -128,6 +134,10 @@ def routing_ospf(client_session, esg_name, vnic_ip, area_id, auth_type, auth_val
 
     routing_dict['routing']['ospf']['enabled'] = 'true'
     routing_dict['routing']['ospf']['gracefulRestart'] = 'true'
+    # PEZ Changes
+    # We don't want to distribute a default route
+    routing_dict['routing']['ospf']['defaultOriginate'] = 'false'
+    #
     routing_dict['routing']['ospf']['ospfAreas']['ospfArea']['areaId'] = area_id
     routing_dict['routing']['ospf']['ospfAreas']['ospfArea']['type'] = 'Normal'
     routing_dict['routing']['ospf']['ospfAreas']['ospfArea']['authentication']['type'] = auth_type
@@ -139,6 +149,13 @@ def routing_ospf(client_session, esg_name, vnic_ip, area_id, auth_type, auth_val
     routing_dict['routing']['ospf']['ospfInterfaces']['ospfInterface']['deadInterval'] = '40'
     routing_dict['routing']['ospf']['ospfInterfaces']['ospfInterface']['priority'] = '128'
     routing_dict['routing']['ospf']['ospfInterfaces']['ospfInterface']['cost'] = '1'
+
+    # PEZ Changes
+    # Distribute routes
+    routing_dict['routing']['ospf']['redistribution']['enabled'] = 'true'
+    routing_dict['routing']['ospf']['redistribution']['rules']['rule']['from']['connected'] = 'true'
+    routing_dict['routing']['ospf']['redistribution']['rules']['rule']['from']['static'] = 'true'
+    routing_dict['routing']['ospf']['redistribution']['rules']['rule']['action'] = 'permit'
 
     esg_id, esg_params = get_edge(client_session, esg_name)
     if not esg_id:
@@ -164,6 +181,135 @@ def _routing_ospf(client_session, vccontent, **kwargs):
         print 'Edge Service Gateway {} configured for OSPF'.format(kwargs['esg_name'], esg_id)
     else:
         print 'Edge Service Gateway {} configuration of OSPF failed'.format(kwargs['esg_name'])
+
+# PEZ Changes
+# New functions to create an ipset
+def create_ipset(client_session, esg_name, ipset_name, ipset_value):
+    """
+    This function creates an IPset on the edge
+    :param client_session: An instance of an NsxClient Session
+    :param ipset_name: Name of the ipset to be created
+    :param ipset_value: value of the IPset to be created
+    :return: ???
+    """
+
+    ipset_dict = client_session.extract_resource_body_example('ipsetCreate', 'create')
+    ipset_dict['ipset']['inheritanceAllowed'] = 'false'
+    ipset_dict['ipset']['name'] = ipset_name
+    ipset_dict['ipset']['objectTypeName'] = 'IPSet'
+    ipset_dict['ipset']['type']['typeName'] = 'IPSet'
+    ipset_dict['ipset']['value']= ipset_value
+
+    esg_id, esg_params = get_edge(client_session, esg_name)
+    if not esg_id:
+        return False, None
+
+    new_ipset = client_session.create('ipsetCreate', request_body_dict=ipset_dict, uri_parameters={'scopeMoref':esg_id})
+    if new_ipset['status'] == 201:
+            return True, esg_id
+    else:
+            return False, esg_id
+
+def _create_ipset(client_session, vccontent, **kwargs):
+    needed_params = ['esg_name', 'ipset_name', 'ipset_value']
+    if not check_for_parameters(needed_params, kwargs):
+        return None
+
+    result, esg_id = create_ipset(client_session, kwargs['esg_name'], kwargs['ipset_name'], kwargs['ipset_value'])
+    if kwargs['verbose'] and result and esg_id:
+        edge_id, esg_details = esg_read(client_session, esg_id)
+        print json.dumps(esg_details)
+    elif result and esg_id:
+        print '{} created on Edge Service Gateway'.format(kwargs['ipset_name'])
+    else:
+        print '{} creation failed on Edge Service Gateway'.format(kwargs['ipset_name'])
+
+# PEZ Changes
+# new function to create firewall rules
+def create_fw_rule(client_session, vccontent, esg_name, rule_src, rule_dst, rule_app, rule_action, rule_description):
+    """
+    This function creates a firewall on the edge
+    :param client_session: An instance of an NsxClient Session
+    :param rule_src: source object of the firwall rule
+    :param rule_dst: destination object of the firwall rule
+    :param rule_app: application object of the firwall rule
+    :param rule_action: accept or deny
+    :param rule_description: description of the rule
+
+    :return: ???
+    """
+    firewallRules_dict = dict()
+    firewallRules_dict['firewallRules'] = dict()
+    firewallRules_dict['firewallRules']['firewallRule'] = list()
+
+    firewallRule_dict =  dict()
+
+    firewallRule_dict['enabled'] = 'true'
+    firewallRule_dict['loggingEnabled'] = 'true'
+
+    firewallRule_dict['name'] = rule_description
+    firewallRule_dict['action'] = rule_action
+
+    # if the source/dst/application is any, the dict is not needed.
+    # if the src/dest/app object doesn't exist, fail gracefully. Otherwise an any-any-any rule will be created
+    if rule_src != 'any':
+        src = nametovalue (vccontent, client_session, rule_src, 'ipset')
+        if src == '':
+            return False, None
+        else:
+            firewallRule_dict['source'] = {'groupingObjectId':src}
+
+    if rule_dst != 'any':
+        dst = nametovalue (vccontent, client_session, rule_dst, 'ipset')
+        if dst == '':
+            return False, None
+        else:
+            firewallRule_dict['destination'] = {'groupingObjectId':dst}
+
+    if rule_app != 'any':
+
+        # find the ID for the rule_app object
+        serviceGroups = client_session.read('serviceGroups', uri_parameters={'scopeId': 'globalroot-0' })
+        serviceGroups_list = serviceGroups.items()[1][1]['list']['applicationGroup']
+        app = ''
+        for i, val in enumerate(serviceGroups_list):
+            if str(val['name']) == rule_app:
+                app = val['objectId']
+
+        if app == '':
+            return False, None
+        else:
+            firewallRule_dict['application'] = {'applicationId':app}
+
+    firewallRules_dict['firewallRules']['firewallRule'].append(firewallRule_dict)
+
+    esg_id, esg_params = get_edge(client_session, esg_name)
+    if not esg_id:
+        return False, None
+
+    new_firewallRules = client_session.create('firewallRules', request_body_dict=firewallRules_dict, uri_parameters={'edgeId':esg_id})
+
+    if new_firewallRules['status'] == 201:
+        return True, new_firewallRules['objectId']
+    else:
+        return False, None
+
+
+def _create_fw_rule(client_session, vccontent, **kwargs):
+    needed_params = ['rule_src', 'rule_dst', 'rule_app', 'rule_action', 'rule_description' ]
+    if not check_for_parameters(needed_params, kwargs):
+        return None
+
+    result, rule_id = create_fw_rule(client_session, vccontent, kwargs['esg_name'], kwargs['rule_src'], kwargs['rule_dst'], kwargs['rule_app'], kwargs['rule_action'],kwargs['rule_description'])
+    if kwargs['verbose'] and result and esg_id:
+        edge_id, esg_details = esg_read(client_session, esg_id)
+        print json.dumps(esg_details)
+    elif result and rule_id:
+        print 'Rule {} created on Edge Service Gateway'.format(rule_id)
+    else:
+        print 'Rule creation failed on Edge Service Gateway'
+
+
 
 def esg_delete(client_session, esg_name):
     """
@@ -353,7 +499,9 @@ def _esg_cfg_interface(client_session, vccontent, **kwargs):
     result = esg_cfg_interface(client_session, kwargs['esg_name'], kwargs['vnic_index'], name=kwargs['vnic_name'],
                                vnic_type=kwargs['vnic_type'], portgroup_id=portgroup, is_connected=kwargs['vnic_state'],
                                ipaddr=kwargs['vnic_ip'], netmask=netmask,
-                               prefixlen=prefixlen, secondary_ips=secondary_ips)
+                               prefixlen=prefixlen, secondary_ips=secondary_ips,
+                               # PEZ Changes
+                               enable_send_redirects='false')
     if result:
         print 'Edge Services Router {} vnic{} has been configured'.format(kwargs['esg_name'], kwargs['vnic_index'])
     else:
