@@ -924,7 +924,8 @@ def _esg_fw_default_set(client_session, **kwargs):
     if not check_for_parameters(needed_params, kwargs):
         return None
 
-    result = esg_fw_default_set(client_session, kwargs['esg_name'], kwargs['fw_default'])
+    # PEZ Changes to log by default
+    result = esg_fw_default_set(client_session, kwargs['esg_name'], kwargs['fw_default'], 'true')
 
     if result:
         print 'Default firewall policy on Edge Services Router {} set to {}'.format(kwargs['esg_name'],
@@ -954,6 +955,8 @@ def contruct_parser(subparsers):
     set_size:         Resize ESG
     set_fw_status:    Set the default firewall policy to accept or deny
     routing_ospf:     Configure OSPF Routing
+    # PEZ Changes
+    create_ipset:     Create an ipset
     """)
 
     parser.add_argument("-n",
@@ -1028,6 +1031,21 @@ def contruct_parser(subparsers):
     parser.add_argument("-auth_value",
                         "--auth_value",
                         help="value for auth")
+    # PEZ Changes
+    parser.add_argument("--ipset_name",
+                        help="name of IPset")
+    parser.add_argument("--ipset_value",
+                            help="value of IPset")
+    parser.add_argument("--rule_src",
+                            help="Source IP of FW rule")
+    parser.add_argument("--rule_dst",
+                            help="Dest IP of FW rule")
+    parser.add_argument("--rule_app",
+                        help="Application of FW rule")
+    parser.add_argument("--rule_action",
+                        help="accept or deny of FW rule")
+    parser.add_argument("--rule_description",
+                        help="Description of the FW rule")
 
     parser.set_defaults(func=_esg_main)
 
@@ -1084,7 +1102,10 @@ def _esg_main(args):
             'add_route': _esg_route_add,
             'delete_route': _esg_route_del,
             'list_routes': _esg_route_list,
-            'routing_ospf': _routing_ospf
+            # PEZ Changes
+            'routing_ospf': _routing_ospf,
+            'create_ipset': _create_ipset,
+            'create_fw_rule': _create_fw_rule
         }
         command_selector[args.command](client_session, vccontent=vccontent, esg_name=args.esg_name,
                                        esg_pwd=args.esg_password, esg_size=args.esg_size,
@@ -1096,7 +1117,12 @@ def _esg_main(args):
                                        route_net=args.route_net, fw_default=args.fw_default,
                                        esg_remote_access=args.esg_remote_access,
                                        vnic_secondary_ips=args.vnic_secondary_ips, verbose=args.verbose,
-                                       area_id=args.area_id, auth_type=args.auth_type, auth_value=args.auth_value)
+                                       area_id=args.area_id, auth_type=args.auth_type, auth_value=args.auth_value,
+                                       # PEZ Changes
+                                       ipset_name=args.ipset_name, ipset_value=args.ipset_value,
+                                       rule_src=args.rule_src, rule_dst=args.rule_dst, rule_app=args.rule_app,
+                                       rule_action=args.rule_action, rule_description=args.rule_description
+                                       )
     except KeyError as e:
         print('Unknown command: {}'.format(e))
 
